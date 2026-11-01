@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0c12" />
+  <title>FileDrop — Share files</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="aurora" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+
+  <header class="topbar">
+    <span class="logo">FileDrop</span>
+    <button id="logoutBtn" class="btn ghost sm" type="button">Log out</button>
+  </header>
+
+  <main>
+    <section class="card glass glow" id="uploadCard">
+      <h1>Share a file</h1>
+
+      <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Choose a file to share">
+        <input id="fileInput" type="file" hidden />
+        <span class="dz-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="16 16 12 12 8 16" />
+            <line x1="12" y1="12" x2="12" y2="21" />
+            <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" />
+          </svg>
+        </span>
+        <p class="dz-title">Drag &amp; drop a file here</p>
+        <p class="dz-sub">or <span class="link">browse</span> — uploads go straight to your private B2 bucket</p>
+      </div>
+
+      <div id="fileRow" class="file-row hidden">
+        <span class="file-glyph" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <path d="M14 2v6h6" />
+          </svg>
+        </span>
+        <div class="file-meta">
+          <span id="fileName"></span>
+          <span id="fileSize" class="muted"></span>
+        </div>
+        <button id="clearFile" class="btn ghost sm" type="button" aria-label="Clear selected file">✕</button>
+      </div>
+
+      <div class="expiry-row">
+        <label for="expiryTrigger">Link valid for</label>
+        <select id="expiry" class="sr-only" tabindex="-1" aria-hidden="true">
+          <option value="3600">1 hour</option>
+          <option value="86400">1 day</option>
+          <option value="604800">7 days</option>
+          <option value="2592000">30 days</option>
+          <option value="custom">Custom date &amp; time…</option>
+        </select>
+        <div class="dropdown" id="expiryDropdown">
+          <button type="button" id="expiryTrigger" class="dropdown-trigger" aria-haspopup="listbox" aria-expanded="false" aria-controls="expiryMenu">
+            <span id="expiryTriggerText">1 hour</span>
+            <svg class="dropdown-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+          </button>
+          <ul class="dropdown-menu" id="expiryMenu" role="listbox" aria-label="Link valid for" aria-hidden="true" tabindex="-1">
+            <li class="dropdown-item" role="option" tabindex="-1" data-value="3600" aria-selected="true">1 hour</li>
+            <li class="dropdown-item" role="option" tabindex="-1" data-value="86400" aria-selected="false">1 day</li>
+            <li class="dropdown-item" role="option" tabindex="-1" data-value="604800" aria-selected="false">7 days</li>
+            <li class="dropdown-item" role="option" tabindex="-1" data-value="2592000" aria-selected="false">30 days</li>
+            <li class="dropdown-item" role="option" tabindex="-1" data-value="custom" aria-selected="false">Custom date &amp; time…</li>
+          </ul>
+        </div>
+        <input id="expiryCustom" type="datetime-local" class="hidden" />
+      </div>
+
+      <button id="createBtn" class="btn primary" type="button" disabled>Create shareable link</button>
+
+      <div id="progressWrap" class="progress hidden">
+        <div id="progressBar"></div>
+        <span id="progressText"></span>
+      </div>
+
+      <div id="result" class="result hidden">
+        <div id="resultNote" class="result-note hidden">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5" /></svg>
+          <span>Already uploaded — reusing your previous link</span>
+        </div>
+        <label>Shareable link</label>
+        <div class="result-row">
+          <input id="resultLink" readonly />
+          <button id="copyLink" class="btn primary sm" type="button">Copy</button>
+        </div>
+        <button id="viewLink" class="btn ghost sm" type="button">Open</button>
+      </div>
+
+      <p id="errorBox" class="error hidden"></p>
+    </section>
+
+    <section class="card glass" id="filesCard">
+      <h2>My files</h2>
+      <div id="filesEmpty" class="empty muted">Nothing shared yet.</div>
+      <div id="filesTable" class="files hidden">
+        <div id="filesBody" class="files-body"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/fx.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

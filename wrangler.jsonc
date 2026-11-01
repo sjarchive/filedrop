@@ -1,0 +1,30 @@
+{
+  "name": "filedrop",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  // Static frontend (index.html, login.html, css, js)
+  "assets": {
+    "directory": "public",
+    "binding": "ASSETS",
+    // worker runs for every request so it can stamp security headers on assets
+    "run_worker_first": true
+  },
+  // Free-tier KV for sessions, file metadata and share-link expiry
+  "kv_namespaces": [
+    { "binding": "FILES", "id": "a3deb253897f40a692eee30fa833c017" }
+  ],
+  // Hourly cron: deletes expired files from Backblaze B2 + reaps abandoned uploads
+  "triggers": {
+    "crons": ["0 * * * *"]
+  },
+  "vars": {
+    "B2_BUCKET": "filedrop-sjoshi",
+    "B2_ENDPOINT": "https://s3.us-east-005.backblazeb2.com",
+    "B2_REGION": "us-east-005"
+  }
+  // Secrets (set with `wrangler secret put <NAME>`):
+  //   B2_KEY_ID  - Backblaze application keyID
+  //   B2_APP_KEY - Backblaze applicationKey
+  //   AUTH_USER  - your login username
+  //   AUTH_PASS  - your login password
+}
