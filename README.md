@@ -7,6 +7,7 @@ Self-hosted file sharing: log in, upload a file, get a shareable link that expir
 - **Cloudflare KV** (free tier) — sessions, file metadata, link expiry
 - An **hourly cron** deletes expired files from B2 automatically
 - **Mobile-first glass UI** — aurora/mesh gradients, glassmorphism, spotlight & border glow, 3D tilt, parallax, skeleton loaders; fully reduced-motion aware
+- **Continuous Deployment**: every push to `main` is automatically built and deployed to the Cloudflare Worker via [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/) (`npx wrangler deploy`). The GitHub repo is the source of truth — the worker keeps running even if the local clone is deleted.
 
 ## How it works
 
