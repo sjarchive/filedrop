@@ -11,9 +11,9 @@ let busy = false; // declared up front — updateCreateBtn() reads it
 (async () => {
   try {
     const res = await fetch('/api/me');
-    if (!res.ok) location.href = '/login';
+    if (res.status === 401) location.href = '/login';
   } catch {
-    location.href = '/login';
+    // transient network hiccup — protected API calls still enforce auth
   }
 })();
 
@@ -28,7 +28,12 @@ const dropzone = $('dropzone');
 const fileInput = $('fileInput');
 
 dropzone.addEventListener('click', () => fileInput.click());
-dropzone.addEventListener('keydown', (e) => e.key === 'Enter' && fileInput.click());
+dropzone.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    fileInput.click();
+  }
+});
 fileInput.addEventListener('change', () => {
   if (fileInput.files[0]) selectFile(fileInput.files[0]);
   fileInput.value = ''; // allow re-selecting the same file after clearing
@@ -69,8 +74,8 @@ function selectFile(file) {
 async function rejectIfDuplicate(file) {
   const seq = ++duplicateCheckSeq;
   const hash = await fileHash(file);
-  // bail if the user picked another file (or cleared) while we were hashing
-  if (seq !== duplicateCheckSeq || selectedFile !== file) return;
+  // bail if an upload started or the user picked another file / cleared while hashing
+  if (busy || seq !== duplicateCheckSeq || selectedFile !== file) return;
   try {
     const res = await fetch('/api/uploads/check', {
       method: 'POST',
@@ -82,7 +87,7 @@ async function rejectIfDuplicate(file) {
       return;
     }
     const data = await res.json().catch(() => null);
-    if (seq !== duplicateCheckSeq || selectedFile !== file) return; // stale race
+    if (busy || seq !== duplicateCheckSeq || selectedFile !== file) return; // stale race
     if (data?.duplicate) {
       const how =
         data.match === 'name-size'
@@ -100,6 +105,7 @@ async function rejectIfDuplicate(file) {
 }
 
 function resetSelection() {
+  duplicateCheckSeq++;
   selectedFile = null;
   fileInput.value = '';
   $('fileRow').classList.add('hidden');
@@ -108,7 +114,9 @@ function resetSelection() {
   hideResult();
 }
 
-$('clearFile').addEventListener('click', resetSelection);
+$('clearFile').addEventListener('click', () => {
+  if (!busy) resetSelection();
+});
 
 /* -------------------------------- expiry --------------------------------- */
 
@@ -125,6 +133,7 @@ $('expiry').addEventListener('change', () => {
   updateCreateBtn();
 });
 
+$('expiryCustom').addEventListener('input', updateCreateBtn);
 $('expiryCustom').addEventListener('change', updateCreateBtn);
 
 /* ---- themed dropdown: visual listbox wired to the hidden #expiry ---- */
@@ -258,17 +267,25 @@ function getExpiryPayload() {
   return { duration: Number(v) };
 }
 
+const MAX_EXPIRY_MS = 90 * 24 * 3600 * 1000;
+
 function isExpiryPassed(payload) {
-  return (
-    payload.expiresAt !== undefined &&
-    payload.expiresAt < Date.now() + 60 * 1000 // server demands ≥ 1 min ahead
-  );
+  if (payload.expiresAt === undefined) return false;
+  return !Number.isFinite(payload.expiresAt) || payload.expiresAt < Date.now() + 60 * 1000;
+}
+
+function isExpiryTooFar(payload) {
+  if (payload.expiresAt === undefined) return false;
+  return Number.isFinite(payload.expiresAt) && payload.expiresAt > Date.now() + MAX_EXPIRY_MS;
 }
 
 function updateCreateBtn() {
   const customOk = $('expiry').value !== 'custom' || !!$('expiryCustom').value;
   $('createBtn').disabled = !(selectedFile && customOk && !busy);
   $('createBtn').classList.toggle('busy', busy); // spinner while uploading
+  $('clearFile').disabled = busy;
+  $('expiryTrigger').disabled = busy;
+  $('expiryCustom').disabled = busy;
 }
 
 /* --------------------------------- flow ---------------------------------- */
@@ -278,6 +295,7 @@ $('createBtn').addEventListener('click', uploadSelected);
 async function uploadSelected() {
   if (!selectedFile || busy) return;
   const file = selectedFile;
+  duplicateCheckSeq++; // cancel any pending pre-flight duplicate check
   busy = true;
   hideError();
   hideResult();
@@ -287,6 +305,9 @@ async function uploadSelected() {
     const expiry = getExpiryPayload();
     if (!expiry || isExpiryPassed(expiry)) {
       throw new Error('Pick an expiry at least 1 minute in the future');
+    }
+    if (isExpiryTooFar(expiry)) {
+      throw new Error('Pick an expiry at most 90 days in the future');
     }
 
     // hash the bytes (native SHA-256) so the worker can spot a re-upload of
@@ -327,6 +348,7 @@ async function uploadSelected() {
       name: file.name,
       size: file.size,
       type: file.type || 'application/octet-stream',
+      hash,
       ...expiry,
     });
 
@@ -432,7 +454,7 @@ async function refreshList() {
       location.href = '/login';
       return;
     }
-    if (!res.ok) return;
+    if (!res.ok) throw new Error(`List failed (${res.status})`);
     const files = await res.json();
     loaded = true;
 
@@ -510,20 +532,33 @@ function buildRow(f, i) {
   openBtn.className = 'btn ghost sm';
   openBtn.textContent = 'Open';
   openBtn.addEventListener('click', () =>
-    window.open(`${location.origin}/s/${f.id}`, '_blank')
+    window.open(`${location.origin}/s/${f.id}`, '_blank', 'noopener,noreferrer')
   );
 
   const delBtn = document.createElement('button');
   delBtn.className = 'btn danger sm';
   delBtn.textContent = 'Delete';
   delBtn.addEventListener('click', async () => {
+    if (delBtn.disabled) return;
     if (!confirm(`Delete "${f.name}" and its share link?`)) return;
-    const res = await fetch(`/api/files/${f.id}`, { method: 'DELETE' }).catch(() => null);
-    if (res && res.status === 401) {
-      location.href = '/login';
-      return;
+    delBtn.disabled = true;
+    try {
+      const res = await fetch(`/api/files/${f.id}`, { method: 'DELETE' });
+      if (res.status === 401) {
+        location.href = '/login';
+        return;
+      }
+      if (!res.ok) {
+        showError(`Could not delete "${f.name}" — please try again`);
+        return;
+      }
+      if ($('resultLink').value.endsWith(`/s/${f.id}`)) hideResult();
+      refreshList();
+    } catch {
+      showError(`Network error deleting "${f.name}" — please try again`);
+    } finally {
+      delBtn.disabled = false;
     }
-    refreshList();
   });
 
   actions.append(copyBtn, openBtn, delBtn);
@@ -575,6 +610,7 @@ function fmtSize(bytes) {
 }
 
 function fmtRemaining(ms) {
+  if (ms < 60000) return '< 1 min';
   const mins = Math.floor(ms / 60000);
   if (mins < 60) return `${mins} min`;
   const hrs = Math.floor(mins / 60);
@@ -615,5 +651,5 @@ $('copyLink').addEventListener('click', () =>
 
 $('viewLink').addEventListener('click', () => {
   const link = $('resultLink').value;
-  if (link) window.open(link, '_blank');
+  if (link) window.open(link, '_blank', 'noopener,noreferrer');
 });

@@ -17,6 +17,10 @@
   "triggers": {
     "crons": ["0 * * * *"]
   },
+  // Record Worker & cron execution logs in Cloudflare Observability
+  "observability": {
+    "enabled": true
+  },
   "vars": {
     "B2_BUCKET": "filedrop-sjoshi",
     "B2_ENDPOINT": "https://s3.us-east-005.backblazeb2.com",

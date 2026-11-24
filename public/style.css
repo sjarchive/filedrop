@@ -404,6 +404,7 @@ input:focus, select:focus {
   transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
 }
 .dropdown-trigger:hover { border-color: var(--stroke-strong); }
+.dropdown-trigger:disabled { opacity: 0.45; cursor: not-allowed; }
 .dropdown-trigger:focus {
   outline: none;
   border-color: rgba(91, 140, 255, 0.7);
