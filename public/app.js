@@ -26,6 +26,7 @@ $('logoutBtn').addEventListener('click', async () => {
 
 const dropzone = $('dropzone');
 const fileInput = $('fileInput');
+const uploadCard = $('uploadCard');
 
 dropzone.addEventListener('click', () => fileInput.click());
 dropzone.addEventListener('keydown', (e) => {
@@ -39,21 +40,57 @@ fileInput.addEventListener('change', () => {
   fileInput.value = ''; // allow re-selecting the same file after clearing
 });
 
-['dragover', 'dragenter'].forEach((ev) =>
-  dropzone.addEventListener(ev, (e) => {
-    e.preventDefault();
-    dropzone.classList.add('dragover');
-  })
-);
-dropzone.addEventListener('dragleave', (e) => {
+const isFileDrag = (e) => Array.from(e.dataTransfer?.types || []).includes('Files');
+
+// A file dropped anywhere else on the page would make the browser navigate
+// away to it and lose whatever was in progress — swallow those drops.
+for (const ev of ['dragover', 'drop']) {
+  document.addEventListener(ev, (e) => {
+    if (isFileDrag(e)) e.preventDefault();
+  });
+}
+
+// The whole upload card is the drop target, so a file can also be dropped on
+// top of an existing selection (the dropzone itself is hidden then).
+let dragDepth = 0; // enter/leave pairs fire for every child element crossed
+const setDragging = (on) => {
+  dropzone.classList.toggle('dragover', on);
+  uploadCard.classList.toggle('dragover', on);
+};
+uploadCard.addEventListener('dragenter', (e) => {
+  if (!isFileDrag(e)) return;
   e.preventDefault();
-  dropzone.classList.remove('dragover');
+  if (dragDepth++ === 0) setDragging(true);
 });
-dropzone.addEventListener('drop', (e) => {
+uploadCard.addEventListener('dragover', (e) => {
+  if (!isFileDrag(e)) return;
   e.preventDefault();
-  dropzone.classList.remove('dragover');
-  const file = e.dataTransfer?.files?.[0];
-  if (file) selectFile(file);
+  if (e.dataTransfer) e.dataTransfer.dropEffect = busy ? 'none' : 'copy';
+});
+uploadCard.addEventListener('dragleave', () => {
+  if (dragDepth > 0 && --dragDepth === 0) setDragging(false);
+});
+uploadCard.addEventListener('drop', (e) => {
+  if (!isFileDrag(e)) return;
+  e.preventDefault();
+  dragDepth = 0;
+  setDragging(false);
+  const file = e.dataTransfer.files[0];
+  if (file && !busy) selectFile(file);
+});
+// leaving the window or pressing Escape fires no dragleave on the card, so the
+// counter would stay stuck and the highlight with it
+document.addEventListener('dragleave', (e) => {
+  if (!e.relatedTarget && dragDepth) {
+    dragDepth = 0;
+    setDragging(false);
+  }
+});
+document.addEventListener('drop', () => {
+  if (dragDepth) {
+    dragDepth = 0;
+    setDragging(false);
+  }
 });
 
 function selectFile(file) {
@@ -115,7 +152,9 @@ function resetSelection() {
 }
 
 $('clearFile').addEventListener('click', () => {
-  if (!busy) resetSelection();
+  if (busy) return;
+  resetSelection();
+  hideError(); // the message belonged to the file just cleared
 });
 
 /* -------------------------------- expiry --------------------------------- */
@@ -281,8 +320,10 @@ function isExpiryTooFar(payload) {
 
 function updateCreateBtn() {
   const customOk = $('expiry').value !== 'custom' || !!$('expiryCustom').value;
-  $('createBtn').disabled = !(selectedFile && customOk && !busy);
-  $('createBtn').classList.toggle('busy', busy); // spinner while uploading
+  const btn = $('createBtn');
+  btn.disabled = !(selectedFile && customOk && !busy);
+  btn.classList.toggle('busy', busy); // spinner while uploading
+  btn.textContent = busy ? 'Working…' : 'Create shareable link';
   $('clearFile').disabled = busy;
   $('expiryTrigger').disabled = busy;
   $('expiryCustom').disabled = busy;
@@ -291,6 +332,12 @@ function updateCreateBtn() {
 /* --------------------------------- flow ---------------------------------- */
 
 $('createBtn').addEventListener('click', uploadSelected);
+
+// hashing a large file can take a few seconds before the first byte moves
+async function step(label, fn) {
+  $('createBtn').textContent = label;
+  return fn();
+}
 
 async function uploadSelected() {
   if (!selectedFile || busy) return;
@@ -312,7 +359,7 @@ async function uploadSelected() {
 
     // hash the bytes (native SHA-256) so the worker can spot a re-upload of
     // identical content. Memory would spike on huge files, so only hash ≤ 256 MB.
-    const hash = await fileHash(file);
+    const hash = await step('Checking…', () => fileHash(file));
 
     // 1. ask worker for a presigned B2 upload URL — or, if these exact bytes
     //    are already shared and unexpired, get the previous link straight back
@@ -334,7 +381,7 @@ async function uploadSelected() {
     }
 
     // 2. upload directly to B2 with progress
-    await xhrUpload(init.uploadUrl, file);
+    await step('Uploading…', () => xhrUpload(init.uploadUrl, file));
 
     // 3. register file + expiry with the worker — but don't bother if a custom
     //    expiry died during a long upload (server would reject; the cron
@@ -342,15 +389,17 @@ async function uploadSelected() {
     if (isExpiryPassed(expiry)) {
       throw new Error('Custom expiry passed during upload — please start over');
     }
-    await api('/api/files', {
-      id: init.id,
-      key: init.key,
-      name: file.name,
-      size: file.size,
-      type: file.type || 'application/octet-stream',
-      hash,
-      ...expiry,
-    });
+    await step('Finalizing…', () =>
+      api('/api/files', {
+        id: init.id,
+        key: init.key,
+        name: file.name,
+        size: file.size,
+        type: file.type || 'application/octet-stream',
+        hash,
+        ...expiry,
+      })
+    );
 
     const link = `${location.origin}/s/${init.id}`;
     resetSelection(); // clears the selection without touching the result below
@@ -359,8 +408,9 @@ async function uploadSelected() {
     $('result').classList.remove('hidden');
     refreshList();
   } catch (e) {
-    showError(e.message || 'Upload failed');
+    if (!e.cancelled) showError(e.message || 'Upload failed');
   } finally {
+    cancelUpload = null;
     busy = false;
     hideProgress();
     updateCreateBtn();
@@ -384,6 +434,16 @@ async function api(path, body) {
 
 const UPLOAD_STALL_MS = 60 * 1000; // no progress for 60 s → give up
 
+// set while a transfer can still be aborted; the Cancel button calls it
+let cancelUpload = null;
+let progressRaf = 0;
+let pendingFrac = 0;
+
+function flushProgress() {
+  progressRaf = 0;
+  showProgress(pendingFrac);
+}
+
 function xhrUpload(url, file) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -392,6 +452,7 @@ function xhrUpload(url, file) {
 
     const done = (fn, arg) => {
       clearInterval(stallTimer);
+      cancelUpload = null;
       if (!settled) {
         settled = true;
         fn(arg);
@@ -401,18 +462,33 @@ function xhrUpload(url, file) {
     // abort on a stalled connection instead of hanging forever
     const stallTimer = setInterval(() => {
       if (Date.now() - lastActivity > UPLOAD_STALL_MS) {
-        xhr.abort();
+        // settle first: abort() fires the abort event synchronously, which would
+        // otherwise report a stall as "Upload canceled"
         done(reject, new Error('Upload stalled — no progress for 60 s'));
+        xhr.abort();
       }
     }, 5000);
 
+    cancelUpload = () => {
+      done(reject, Object.assign(new Error('Upload canceled'), { cancelled: true }));
+      xhr.abort();
+    };
+
     xhr.open('PUT', url);
     showProgress(0);
+    $('cancelUpload').disabled = false;
     xhr.upload.onprogress = (e) => {
       lastActivity = Date.now();
-      if (e.lengthComputable) showProgress(e.loaded / e.total);
+      // progress events arrive far faster than the screen updates — coalesce
+      // them into one write per frame
+      if (e.lengthComputable) {
+        pendingFrac = e.loaded / e.total;
+        if (!progressRaf) progressRaf = requestAnimationFrame(flushProgress);
+      }
     };
     xhr.onload = () => {
+      // the file is in storage; the finalize call cannot be undone
+      $('cancelUpload').disabled = true;
       if (xhr.status >= 200 && xhr.status < 300) {
         showProgress(1, 'Finalizing…');
         done(resolve);
@@ -426,10 +502,16 @@ function xhrUpload(url, file) {
   });
 }
 
+$('cancelUpload').addEventListener('click', () => cancelUpload?.());
+
 /* --------------------------------- lists ---------------------------------- */
 
-let listSig = '';   // skip DOM rebuilds when nothing visible changed
 let loaded = false; // initial skeletons only
+const rows = new Map(); // file id → { item, name, size, exp }
+
+function setText(el, text) {
+  if (el.textContent !== text) el.textContent = text; // skip no-op writes
+}
 
 function renderSkeletons(count = 3) {
   const body = $('filesBody');
@@ -457,37 +539,56 @@ async function refreshList() {
     if (!res.ok) throw new Error(`List failed (${res.status})`);
     const files = await res.json();
     loaded = true;
-
-    // signature = structural data + minute-precision countdown, so labels stay
-    // fresh while unchanged lists keep their hover/scroll state untouched
-    const sig = JSON.stringify(
-      files.map((f) => [f.id, f.name, f.size, Math.ceil((f.expiresAt - Date.now()) / 60000)])
-    );
-    if (sig === listSig) return;
-    listSig = sig;
-
-    const body = $('filesBody');
-    body.innerHTML = '';
-
-    if (!files.length) {
-      $('filesEmpty').textContent = 'Nothing shared yet.';
-      $('filesEmpty').classList.remove('hidden');
-      $('filesTable').classList.add('hidden');
-      return;
-    }
-    $('filesEmpty').classList.add('hidden');
-    $('filesTable').classList.remove('hidden');
-
-    files.forEach((f, i) => body.append(buildRow(f, i)));
+    reconcile(files);
   } catch {
     if (!loaded) {
       $('filesBody').innerHTML = '';
+      rows.clear();
       $('filesTable').classList.add('hidden');
       const empty = $('filesEmpty');
       empty.textContent = 'Couldn’t load files — retrying soon.';
       empty.classList.remove('hidden');
     }
   }
+}
+
+// Updates the list in place: an existing file keeps its row (so hover, keyboard
+// focus and the one-off entrance animation survive), rows are created only for
+// new files and removed for vanished ones. The list used to be rebuilt on every
+// poll because the remaining time in each row changes every minute, which
+// replayed the stagger animation and dropped focus once a minute.
+function reconcile(files) {
+  const body = $('filesBody');
+  body.querySelectorAll('.skel').forEach((sk) => sk.remove());
+
+  const seen = new Set();
+  files.forEach((f, i) => {
+    seen.add(f.id);
+    let row = rows.get(f.id);
+    if (!row) {
+      row = buildRow(f, i);
+      rows.set(f.id, row);
+    }
+    setText(row.name, f.name);
+    row.name.title = f.name;
+    setText(row.size, fmtSize(f.size));
+    const expired = f.expiresAt <= Date.now();
+    row.exp.className = expired ? 'fi-exp expired' : 'fi-exp';
+    setText(row.exp, expired ? 'expired' : `in ${fmtRemaining(f.expiresAt - Date.now())}`);
+    // move only when the order actually changed
+    if (body.children[i] !== row.item) body.insertBefore(row.item, body.children[i] || null);
+  });
+  for (const [id, row] of rows) {
+    if (!seen.has(id)) {
+      row.item.remove();
+      rows.delete(id);
+    }
+  }
+
+  const hasFiles = files.length > 0;
+  $('filesTable').classList.toggle('hidden', !hasFiles);
+  $('filesEmpty').classList.toggle('hidden', hasFiles);
+  if (!hasFiles) $('filesEmpty').textContent = 'Nothing shared yet.';
 }
 
 function buildRow(f, i) {
@@ -500,20 +601,15 @@ function buildRow(f, i) {
 
   const name = document.createElement('span');
   name.className = 'fi-name';
-  name.textContent = f.name;
-  name.title = f.name;
 
   const meta = document.createElement('span');
   meta.className = 'fi-meta';
 
   const size = document.createElement('span');
   size.className = 'fi-size';
-  size.textContent = fmtSize(f.size);
 
-  const expired = f.expiresAt <= Date.now();
   const exp = document.createElement('span');
-  exp.className = expired ? 'fi-exp expired' : 'fi-exp';
-  exp.textContent = expired ? 'expired' : `in ${fmtRemaining(f.expiresAt - Date.now())}`;
+  exp.className = 'fi-exp';
 
   meta.append(size, exp);
   main.append(name, meta);
@@ -552,6 +648,10 @@ function buildRow(f, i) {
         showError(`Could not delete "${f.name}" — please try again`);
         return;
       }
+      // take the row out now rather than waiting for the next list refresh
+      row.item.remove();
+      rows.delete(f.id);
+      if (!rows.size) reconcile([]);
       if ($('resultLink').value.endsWith(`/s/${f.id}`)) hideResult();
       refreshList();
     } catch {
@@ -563,12 +663,18 @@ function buildRow(f, i) {
 
   actions.append(copyBtn, openBtn, delBtn);
   item.append(main, actions);
-  return item;
+
+  const row = { item, name, size, exp };
+  return row;
 }
 
 renderSkeletons(); // shimmer while the first fetch is in flight
 refreshList();
 setInterval(refreshList, 60 * 1000); // keep expiry status fresh
+// a laptop woken from sleep resumes the interval mid-tick — catch up at once
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) refreshList();
+});
 
 /* -------------------------------- helpers --------------------------------- */
 
@@ -598,8 +704,16 @@ async function copyText(text, btn, label) {
     }
     ta.remove();
   }
+  // The feedback text is a different width than the label ("Copied ✓" is wider
+  // than "Copy") — pin the button's width so the row beside it doesn't jump,
+  // and restart the timer on rapid repeated clicks
+  clearTimeout(btn.copyTimer);
+  btn.style.width = `${btn.getBoundingClientRect().width}px`;
   btn.textContent = ok ? 'Copied ✓' : 'Copy failed';
-  setTimeout(() => (btn.textContent = label), 1200);
+  btn.copyTimer = setTimeout(() => {
+    btn.textContent = label;
+    btn.style.width = '';
+  }, 1200);
 }
 
 function fmtSize(bytes) {
@@ -626,6 +740,9 @@ function showProgress(frac, text) {
 }
 
 function hideProgress() {
+  cancelAnimationFrame(progressRaf);
+  progressRaf = 0;
+  pendingFrac = 0;
   $('progressWrap').classList.add('hidden');
 }
 
@@ -639,6 +756,8 @@ function showError(msg) {
   const el = $('errorBox');
   el.textContent = msg;
   el.classList.remove('hidden');
+  // the box sits below everything in the card — bring it into view on a phone
+  el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
 function hideError() {

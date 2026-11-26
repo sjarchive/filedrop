@@ -7,16 +7,19 @@
   const finePointer = matchMedia('(hover: hover) and (pointer: fine)').matches;
   if (reduced) return; // CSS also freezes animations; skip JS effects entirely
 
-  /* Spotlight: glass cards light up under the cursor via --mx/--my */
+  /* Spotlight: glass cards light up under the cursor via --mx/--my. The vars
+     are written to each card's .spot element only — never to :root, where
+     every node in the document would inherit them and be restyled per move. */
   if (finePointer) {
-    for (const card of document.querySelectorAll('.card')) {
+    for (const spot of document.querySelectorAll('.card .spot')) {
+      const card = spot.parentElement;
       let raf = 0;
       let x = 0;
       let y = 0;
       const apply = () => {
         raf = 0;
-        card.style.setProperty('--mx', `${x}px`);
-        card.style.setProperty('--my', `${y}px`);
+        spot.style.setProperty('--mx', `${x}px`);
+        spot.style.setProperty('--my', `${y}px`);
       };
       card.addEventListener(
         'pointermove',
@@ -40,9 +43,8 @@
     let raf = 0;
     const update = () => {
       raf = 0;
-      const root = document.documentElement.style;
-      root.setProperty('--par-y', `${sy * 0.08 + my * 10}px`);
-      root.setProperty('--par-x', `${mx * 16}px`);
+      aurora.style.setProperty('--par-y', `${sy * 0.08 + my * 10}px`);
+      aurora.style.setProperty('--par-x', `${mx * 16}px`);
     };
     const schedule = () => {
       if (!raf) raf = requestAnimationFrame(update);

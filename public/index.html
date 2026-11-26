@@ -18,6 +18,7 @@
 
   <main>
     <section class="card glass glow" id="uploadCard">
+      <div class="spot" aria-hidden="true"></div>
       <h1>Share a file</h1>
 
       <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Choose a file to share">
@@ -74,9 +75,12 @@
 
       <button id="createBtn" class="btn primary" type="button" disabled>Create shareable link</button>
 
-      <div id="progressWrap" class="progress hidden">
-        <div id="progressBar"></div>
-        <span id="progressText"></span>
+      <div id="progressWrap" class="progress-row hidden">
+        <div class="progress">
+          <div id="progressBar"></div>
+          <span id="progressText"></span>
+        </div>
+        <button id="cancelUpload" class="btn ghost sm" type="button">Cancel</button>
       </div>
 
       <div id="result" class="result hidden">
@@ -92,10 +96,11 @@
         <button id="viewLink" class="btn ghost sm" type="button">Open</button>
       </div>
 
-      <p id="errorBox" class="error hidden"></p>
+      <p id="errorBox" class="error hidden" role="alert"></p>
     </section>
 
     <section class="card glass" id="filesCard">
+      <div class="spot" aria-hidden="true"></div>
       <h2>My files</h2>
       <div id="filesEmpty" class="empty muted">Nothing shared yet.</div>
       <div id="filesTable" class="files hidden">
